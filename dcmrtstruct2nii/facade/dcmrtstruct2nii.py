@@ -1,14 +1,23 @@
 from dcmrtstruct2nii.adapters.convert.rtstructcontour2mask import DcmPatientCoords2Mask
 from dcmrtstruct2nii.adapters.convert.filenameconverter import FilenameConverter
-from dcmrtstruct2nii.adapters.input.contours.rtstructinputadapter import RtStructInputAdapter
+from dcmrtstruct2nii.adapters.input.contours.rtstructinputadapter import (
+    RtStructInputAdapter,
+)
 from dcmrtstruct2nii.adapters.input.image.dcminputadapter import DcmInputAdapter
 
 import os.path
 
 from dcmrtstruct2nii.adapters.output.niioutputadapter import NiiOutputAdapter
-from dcmrtstruct2nii.exceptions import PathDoesNotExistException, ContourOutOfBoundsException
+from dcmrtstruct2nii.exceptions import (
+    PathDoesNotExistException,
+    ContourOutOfBoundsException,
+)
 
 import logging
+import sys
+
+sys.path.append(r"/media/medical/gasperp/projects")
+import utilities
 
 
 def list_rt_structs(rtstruct_file):
@@ -19,14 +28,26 @@ def list_rt_structs(rtstruct_file):
     :return: A list of names, if any structures are found
     """
     if not os.path.exists(rtstruct_file):
-        raise PathDoesNotExistException(f'rtstruct path does not exist: {rtstruct_file}')
+        raise PathDoesNotExistException(
+            f"rtstruct path does not exist: {rtstruct_file}"
+        )
 
     rtreader = RtStructInputAdapter()
     rtstructs = rtreader.ingest(rtstruct_file, True)
-    return [struct['name'] for struct in rtstructs]
+    return [struct["name"] for struct in rtstructs]
 
 
-def dcmrtstruct2nii(rtstruct_file, dicom_file, output_path, structures=None, gzip=True, mask_background_value=0, mask_foreground_value=255, convert_original_dicom=True):  # noqa: C901 E501
+def dcmrtstruct2nii(
+    rtstruct_file,
+    dicom_file,
+    output_path,
+    structures=None,
+    gzip=True,
+    mask_background_value=0,
+    mask_foreground_value=255,
+    convert_original_dicom=True,
+    transform_dicom=None,
+):  # noqa: C901 E501
     """
     Converts A DICOM and DICOM RT Struct file to nii
 
@@ -41,19 +62,25 @@ def dcmrtstruct2nii(rtstruct_file, dicom_file, output_path, structures=None, gzi
     :raise UnsupportedTypeException: Raised when conversion is not supported.
     :raise ValueError: Raised when mask_background_value or mask_foreground_value is invalid.
     """
-    output_path = os.path.join(output_path, '')  # make sure trailing slash is there
+    output_path = os.path.join(output_path, "")  # make sure trailing slash is there
 
     if not os.path.exists(rtstruct_file):
-        raise PathDoesNotExistException(f'rtstruct path does not exist: {rtstruct_file}')
+        raise PathDoesNotExistException(
+            f"rtstruct path does not exist: {rtstruct_file}"
+        )
 
     if not os.path.exists(dicom_file):
-        raise PathDoesNotExistException(f'DICOM path does not exists: {dicom_file}')
+        raise PathDoesNotExistException(f"DICOM path does not exists: {dicom_file}")
 
     if mask_background_value < 0 or mask_background_value > 255:
-        raise ValueError(f'Invalid value for mask_background_value: {mask_background_value}, must be between 0 and 255')
+        raise ValueError(
+            f"Invalid value for mask_background_value: {mask_background_value}, must be between 0 and 255"
+        )
 
     if mask_foreground_value < 0 or mask_foreground_value > 255:
-        raise ValueError(f'Invalid value for mask_foreground_value: {mask_foreground_value}, must be between 0 and 255')
+        raise ValueError(
+            f"Invalid value for mask_foreground_value: {mask_foreground_value}, must be between 0 and 255"
+        )
 
     if structures is None:
         structures = []
@@ -66,28 +93,43 @@ def dcmrtstruct2nii(rtstruct_file, dicom_file, output_path, structures=None, gzi
     rtstructs = rtreader.ingest(rtstruct_file)
     dicom_image = DcmInputAdapter().ingest(dicom_file)
 
+    if transform_dicom is not None:
+        dicom_image = utilities.transform_image(
+            input_img_sitk=dicom_image, transform_sitk=transform_dicom
+        )
+
     dcm_patient_coords_to_mask = DcmPatientCoords2Mask()
     nii_output_adapter = NiiOutputAdapter()
     for rtstruct in rtstructs:
-        if len(structures) == 0 or rtstruct['name'] in structures:
-            if 'sequence' not in rtstruct:
-                logging.info('Skipping mask {} no shape/polygon found'.format(rtstruct['name']))
+        if len(structures) == 0 or rtstruct["name"] in structures:
+            if "sequence" not in rtstruct:
+                logging.info(
+                    "Skipping mask {} no shape/polygon found".format(rtstruct["name"])
+                )
                 continue
 
-            logging.info('Working on mask {}'.format(rtstruct['name']))
+            logging.info("Working on mask {}".format(rtstruct["name"]))
             try:
-                mask = dcm_patient_coords_to_mask.convert(rtstruct['sequence'], dicom_image, mask_background_value, mask_foreground_value)
+                mask = dcm_patient_coords_to_mask.convert(
+                    rtstruct["sequence"],
+                    dicom_image,
+                    mask_background_value,
+                    mask_foreground_value,
+                    transform_dicom=transform_dicom,
+                )
             except ContourOutOfBoundsException:
-                logging.warning(f'Structure {rtstruct["name"]} is out of bounds, ignoring contour!')
+                logging.warning(
+                    f'Structure {rtstruct["name"]} is out of bounds, ignoring contour!'
+                )
                 continue
 
             mask.CopyInformation(dicom_image)
 
             mask_filename = filename_converter.convert(f'mask_{rtstruct["name"]}')
-            nii_output_adapter.write(mask, f'{output_path}{mask_filename}', gzip)
+            nii_output_adapter.write(mask, f"{output_path}{mask_filename}", gzip)
 
     if convert_original_dicom:
-        logging.info('Converting original DICOM to nii')
-        nii_output_adapter.write(dicom_image, f'{output_path}image', gzip)
+        logging.info("Converting original DICOM to nii")
+        nii_output_adapter.write(dicom_image, f"{output_path}image", gzip)
 
-    logging.info('Success!')
+    logging.info("Success!")
