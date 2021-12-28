@@ -47,6 +47,7 @@ def dcmrtstruct2nii(
     mask_foreground_value=255,
     convert_original_dicom=True,
     transform_dicom=None,
+    series_id=None,
 ):  # noqa: C901 E501
     """
     Converts A DICOM and DICOM RT Struct file to nii
@@ -69,7 +70,13 @@ def dcmrtstruct2nii(
             f"rtstruct path does not exist: {rtstruct_file}"
         )
 
-    if not os.path.exists(dicom_file):
+    dicom_file_error = False
+    if isinstance(dicom_file, (tuple, list)):
+        if not all([os.path.exists(i) for i in dicom_file]):
+            dicom_file_error = True
+    elif not os.path.exists(dicom_file):
+        dicom_file_error = True
+    if dicom_file_error:
         raise PathDoesNotExistException(f"DICOM path does not exists: {dicom_file}")
 
     if mask_background_value < 0 or mask_background_value > 255:
@@ -91,13 +98,14 @@ def dcmrtstruct2nii(
     rtreader = RtStructInputAdapter()
 
     rtstructs = rtreader.ingest(rtstruct_file)
-    dicom_image = DcmInputAdapter().ingest(dicom_file)
+    dicom_image = DcmInputAdapter().ingest(dicom_file, series_id=series_id)
 
     if transform_dicom is not None:
         dicom_image = utilities.transform_image(
             input_img_sitk=dicom_image, transform_sitk=transform_dicom
         )
 
+    output_seg_masks = {}
     dcm_patient_coords_to_mask = DcmPatientCoords2Mask()
     nii_output_adapter = NiiOutputAdapter()
     for rtstruct in rtstructs:
@@ -108,7 +116,7 @@ def dcmrtstruct2nii(
                 )
                 continue
 
-            logging.info("Working on mask {}".format(rtstruct["name"]))
+            logging.debug("Working on mask {}".format(rtstruct["name"]))
             try:
                 mask = dcm_patient_coords_to_mask.convert(
                     rtstruct["sequence"],
@@ -126,10 +134,12 @@ def dcmrtstruct2nii(
             mask.CopyInformation(dicom_image)
 
             mask_filename = filename_converter.convert(f'mask_{rtstruct["name"]}')
-            nii_output_adapter.write(mask, f"{output_path}{mask_filename}", gzip)
+            mask_filepath = f"{output_path}{mask_filename}"
+            nii_output_adapter.write(mask, mask_filepath, gzip)
+            output_seg_masks[mask_filename] = mask_filepath
 
     if convert_original_dicom:
         logging.info("Converting original DICOM to nii")
         nii_output_adapter.write(dicom_image, f"{output_path}image", gzip)
-
     logging.info("Success!")
+    return dicom_image, output_seg_masks
