@@ -111,7 +111,7 @@ def dcmrtstruct2nii(
     for rtstruct in rtstructs:
         if len(structures) == 0 or rtstruct["name"] in structures:
             if "sequence" not in rtstruct:
-                logging.info(
+                logging.debug(
                     "Skipping mask {} no shape/polygon found".format(rtstruct["name"])
                 )
                 continue
@@ -136,6 +136,7 @@ def dcmrtstruct2nii(
             mask_filename = filename_converter.convert(f'mask_{rtstruct["name"]}')
             mask_filepath = f"{output_path}{mask_filename}"
             nii_output_adapter.write(mask, mask_filepath, gzip)
+            mask_filepath += '.nii.gz' if gzip else '.nii'
             output_seg_masks[mask_filename] = mask_filepath
 
     if convert_original_dicom:
